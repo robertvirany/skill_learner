@@ -1,0 +1,183 @@
+import SwiftUI
+import AVFoundation
+
+struct Question: Identifiable, Codable {
+    let id = UUID()
+    var text: String
+    var answered: Bool = false
+    var audioFileName: String?
+}
+
+class QuestionsViewModel: ObservableObject {
+    @Published var questions: [Question] = [] {
+        didSet {
+            saveQuestions()
+        }
+    }
+    
+    private let questionsKey = "questions"
+    
+    init() {
+        loadQuestions()
+    }
+    
+    func addQuestion(_ text: String) {
+        let newQuestion = Question(text: text)
+        questions.append(newQuestion)
+    }
+    
+    func toggleAnswered(_ question: Question) {
+        if let index = questions.firstIndex(where: { $0.id == question.id }) {
+            questions[index].answered.toggle()
+        }
+    }
+    
+    func saveQuestions() {
+        if let encoded = try? JSONEncoder().encode(questions) {
+            UserDefaults.standard.set(encoded, forKey: questionsKey)
+        }
+    }
+    
+    func loadQuestions() {
+        if let data = UserDefaults.standard.data(forKey: questionsKey),
+           let decoded = try? JSONDecoder().decode([Question].self, from: data) {
+            questions = decoded
+        }
+    }
+}
+
+struct ContentView: View {
+    @StateObject private var viewModel = QuestionsViewModel()
+    @State private var newQuestionText = ""
+    
+    var body: some View {
+        NavigationView {
+            VStack {
+                List {
+                    ForEach(viewModel.questions) { question in
+                        HStack {
+                            Button(action: {
+                                viewModel.toggleAnswered(question)
+                            }) {
+                                Image(systemName: question.answered ? "checkmark.circle.fill" : "circle")
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            
+                            Text(question.text)
+                            
+                            Spacer()
+                            
+                            if let audioFileName = question.audioFileName {
+                                Button(action: {
+                                    playRecording(named: audioFileName)
+                                }) {
+                                    Image(systemName: "play.circle")
+                                }
+                            } else {
+                                NavigationLink(destination: RecordingView(question: question, viewModel: viewModel)) {
+                                    Image(systemName: "mic.circle")
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                HStack {
+                    TextField("Enter a new question", text: $newQuestionText)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .padding()
+                    
+                    Button(action: {
+                        if !newQuestionText.isEmpty {
+                            viewModel.addQuestion(newQuestionText)
+                            newQuestionText = ""
+                        }
+                    }) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.title)
+                    }
+                    .padding()
+                }
+            }
+            .navigationTitle("Mentor Questions")
+        }
+    }
+    
+    func playRecording(named fileName: String) {
+        let path = getDocumentsDirectory().appendingPathComponent(fileName)
+        let player = try? AVAudioPlayer(contentsOf: path)
+        player?.play()
+    }
+    
+    func getDocumentsDirectory() -> URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+    }
+}
+
+struct RecordingView: View {
+    let question: Question
+    @ObservedObject var viewModel: QuestionsViewModel
+    @State private var isRecording = false
+    @State private var audioRecorder: AVAudioRecorder?
+    
+    var body: some View {
+        VStack {
+            if isRecording {
+                Button(action: stopRecording) {
+                    Text("Stop Recording")
+                        .font(.title)
+                        .foregroundColor(.red)
+                }
+            } else {
+                Button(action: startRecording) {
+                    Text("Start Recording")
+                        .font(.title)
+                }
+            }
+        }
+        .onDisappear {
+            stopRecording()
+        }
+        .navigationTitle("Record Answer")
+    }
+    
+    func startRecording() {
+        let audioFileName = getDocumentsDirectory().appendingPathComponent("\(question.id).m4a")
+        let settings = [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVSampleRateKey: 44100,
+            AVNumberOfChannelsKey: 2,
+            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+        ]
+        
+        do {
+            audioRecorder = try AVAudioRecorder(url: audioFileName, settings: settings)
+            audioRecorder?.record()
+            isRecording = true
+            
+            if let index = viewModel.questions.firstIndex(where: { $0.id == question.id }) {
+                viewModel.questions[index].audioFileName = "\(question.id).m4a"
+            }
+        } catch {
+            print("Failed to start recording")
+        }
+    }
+    
+    func stopRecording() {
+        audioRecorder?.stop()
+        isRecording = false
+    }
+    
+    func getDocumentsDirectory() -> URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+    }
+}
+
+@main
+struct MentorQuestionsApp: App {
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+    }
+}
